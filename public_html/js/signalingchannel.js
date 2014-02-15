@@ -5,11 +5,11 @@
  */
 
 
-function SignalingChannel(targetHost, targetPort, userId) {
+function SignalingChannel(targetHost, targetPort, mediator) {
   this.targetHost = targetHost;
   this.targetPort = targetPort;
   this.tracer = new Tracer("SignalingChannel");
-  this.userid = userId;
+  this.mediator = mediator;
   this.socket;
 }
 
@@ -27,11 +27,12 @@ SignalingChannel.open = function(onsigchannelmsg, onsigchannelclose, onsigchanne
     this.socket = new WebSocket(targetURL, 'appstract');
 
     this.socket.onopen = function() {
+        
         trace("open", 'Channel opened.');
+        
          var msgREGISTER = {};
             msgREGISTER.msg_type = "REGISTER";
             msgREGISTER.userid = this.userid;
-            msgREGISTER.contact = "TBD_CONTACT";
             socket.send(JSON.stringify(msgREGISTER));
 
     };
@@ -48,10 +49,35 @@ SignalingChannel.open = function(onsigchannelmsg, onsigchannelclose, onsigchanne
 };
 
 
-SignalingChannel.negotiateMediaChannel = function(targetUserId) {
+SignalingChannel.offerMedia = function(offer) {
     
 };
 
-SignalingChannel.negotiateDataChannel = function(targetUserId) {
+
+SignalingChannel.answerMedia = function(answer) {
     
 };
+
+SignalingChannel.hangupMedia = function() {
+    
+};
+
+SignalingChannel.offerData = function(offer) {
+    
+};
+
+SignalingChannel.answerData = function(answer) {
+    
+};
+
+SignalingChannel.hangupData = function() {
+    
+};
+
+SignalingChannel.close = function() {
+    
+};
+
+
+
+SignalingChannel.on

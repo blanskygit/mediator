@@ -17,12 +17,16 @@
 //
 
 // This is where the node.js is running
-var nodeHostAddress  = "54.201.205.82";
-var nodeHostPort     = "8080";
+var nodeHostAddress     = "54.201.205.82";
+var nodeHostPort        = "8080";
+var userId              = "blansky";
 
 var stunServer       = "stun:stun.l.google.com:19302";
 var channelReady     = false;
 
+
+
+var sigchannel;
 var pc;
 var socket;
 var localStream;
@@ -39,6 +43,36 @@ var sdpConstraints = {'mandatory': {
 // Button state definitions
 btn1.disabled = false;
 btn2.disabled = true;
+
+
+
+
+var mediator = new Mediator(userId)
+
+
+function Mediator(userId){
+    this.userId = userId;
+    this.sigchannel = new SignalingChannel(nodeHostAddress, nodeHostPort, mediator);
+}
+
+Mediator.init = function() {
+    
+    btn1.disabled = true;
+    btn2.disabled = false;
+
+    // Clear the trace section
+    tracer.clear();
+    
+    trace("Mediator.init", "Initializes navigator.getUserMedia & window.URL");
+
+    navigator.getUserMedia = navigator.getUserMedia ||
+            navigator.webkitGetUserMedia ||
+            navigator.mozGetUserMedia ||
+            navigator.msGetUserMedia;
+    
+    window.URL = window.URL || window.webkitURL;
+};
+
 
 // This function sends candidates to the remote peer, via the node server
 var onIceCandidate = function(event) {
@@ -93,7 +127,7 @@ var createPeerConnection = function() {
 
     trace("createPeerConnection", "Created webkitRTCPeerConnnection ");
     // trace("createPeerConnection", "pc-config : " + JSON.stringify(pc_config));
-}
+};
 
 // In case we received an OFFER as SERVER, we send an ANSWER backwards
 function setLocalAndSendMessage(sessionDescription) {
@@ -126,26 +160,26 @@ var openChannel = function () {
        socket.send(JSON.stringify(msgINFO));
 
        // if we are acting as CLIENT
-       if ( weAreActingAs == 'CLIENT' ) {
+        if (weAreActingAs == 'CLIENT') {
 
-          trace("openChannel","Creating PeerConnection");
-          createPeerConnection();
+            trace("openChannel", "Creating PeerConnection");
+            createPeerConnection();
 
-          trace("openChannel","Adding local stream");
-          pc.addStream(localStream);
+            trace("openChannel", "Adding local stream");
+            pc.addStream(localStream);
 
-          trace("openChannel","Sending offer to peer");
+            trace("openChannel", "Sending offer to peer");
 
-          pc.createOffer(function (sessionDescription) {
-             pc.setLocalDescription(sessionDescription);
-             var msgOFFER = {};
-             msgOFFER.msg_type = 'OFFER';
-             msgOFFER.data = sessionDescription;
-             trace("openChannel","Sending sdp : " + sessionDescription.sdp);
-             socket.send(JSON.stringify(msgOFFER));
-          }, null, sdpConstraints);
+            pc.createOffer(function(sessionDescription) {
+                pc.setLocalDescription(sessionDescription);
+                var msgOFFER = {};
+                msgOFFER.msg_type = 'OFFER';
+                msgOFFER.data = sessionDescription;
+                trace("openChannel", "Sending sdp : " + sessionDescription.sdp);
+                socket.send(JSON.stringify(msgOFFER));
+            }, null, sdpConstraints);
 
-       };
+        };
     };
 
     socket.onerror = function (error) {
@@ -220,56 +254,36 @@ var hasGetUserMedia = function() {
 
 // Main entry point...
 function start() {
-
-    btn1.disabled = true;
-    btn2.disabled = false;    
-
-    // Clear the trace section
-    tracer.clear();
-
-    if ( weAreActingAs == 'CLIENT' ) {
- 
-       // Logic for Client
-
-       trace("start","Starting as Client");
-       
-       navigator.getUserMedia = navigator.getUserMedia ||
-                                navigator.webkitGetUserMedia ||
-                                navigator.mozGetUserMedia ||
-                                navigator.msGetUserMedia;
-       window.URL = window.URL || window.webkitURL;
-
-       if ( hasGetUserMedia() ){
-       
-          trace("start","Starting as Client");
-          openChannel();
-	  
-       } else{
-          trace("Main","GetUserMedia not supported, try a more state of the art browser");
-       }
-
-    } else {
-
-       trace("start","Starting as Server");
-       openChannel();
+    
+    trace("start", "Starting Mediator");
+    
+    mediator.init();
+    
+    if (!hasGetUserMedia()) {
+         trace("start", "ERROR - GetUserMedia not supported by the browser!");
     }
-
+    else {
+        mediator.sigchannel.open();
+    }
 };
 
 function call() {
 
     btn2.disabled = true;
-   
-    trace("call","Starting call");
-    
+
+    trace("call", "Starting call");
+
     var video = $("#local-video");
-    
-    navigator.getUserMedia({audio:true, video:true}, function(stream) {
-       localStream = stream;
-	trace("strean",stream);
-	   
-       video.attr('src', window.URL.createObjectURL(localStream));
-       openChannel();
+
+    navigator.getUserMedia({audio: true, video: true}, function(stream) {
+
+        localStream = stream;
+        trace("strean", stream);
+
+        video.attr('src', window.URL.createObjectURL(localStream));
+        
+        openChannel();
+        
     }, accessRejected);
     
 }
@@ -306,3 +320,18 @@ function stop() {
 }
 
 
+Mediator.onOfferMedia = function(offer) {
+    trace("Mediator.onOfferMedia", "Received OFFER = \n" + offer);
+    
+    // Creates PeerConnection on OFFER (caller side)
+    createPeerConnection();
+    
+    pc.setRemoteDescription(new RTCSessionDescription(offer));
+    pc.createAnswer(setLocalAndSendMessage, null, sdpConstraints);
+};
+
+Mediator.onAnswerMedia = function(answer) {
+    trace("Mediator.onAnswerMedia", "Received ANSWER = \n" + answer);
+    
+    pc.setRemoteDescription(new RTCSessionDescription(answer));
+};
