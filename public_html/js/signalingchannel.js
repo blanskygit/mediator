@@ -57,26 +57,65 @@ SignalingChannel.open = function(appcontext) {
 };
 
 
-SignalingChannel.offerMedia = function(offer) {
+SignalingChannel.offerMedia = function(offer, calldetails) {
     var msgOFFER = {};
     msgOFFER.msg_type = 'OFFER';
     msgOFFER.data = offer;
-    trace("SignalingChannel.offerMedia", "Sending SDP : " + offer.sdp);
+    msgOFFER.calldetails = calldetails;
+    msgOFFER.userid = this.mediator.userId;
+    
+    trace("SignalingChannel.offerMedia", "Call Id [" + msgOFFER.calldetails.callid + "] Sending SDP : " + offer.sdp);
     this.socket.send(JSON.stringify(msgOFFER));
 };
 
 
-SignalingChannel.answerMedia = function(answer) {
+SignalingChannel.answerMedia = function(answer, calldetails) {
     var msgANSWER = {};
     msgANSWER.msg_type = 'ANSWER';
     msgANSWER.data = answer;
+    msgANSWER.calldetails = calldetails;
+    msgANSWER.userid = this.mediator.userId;
+    
     trace("SignalingChannel.answerMedia", "Sending SDP : " + answer.sdp);
     this.socket.send(JSON.stringify(msgANSWER));
 };
 
-SignalingChannel.hangupMedia = function() {
-    
+SignalingChannel.hangupMedia = function(calldetails) {
+     var msgBYE = {};
+     msgBYE.msg_type = 'BYE';
+     msgBYE.calldetails = calldetails;
+     msgBYE.userid = this.mediator.userId;
+     
+     trace("SignalingChannel.hangupMedia", "Sending BYE");
+     this.socket.send(JSON.stringify(msgBYE));
 };
+
+
+SignalingChannel.candidate = function(candidate, calldetails) {
+    var msgCANDIDATE = {};
+    msgCANDIDATE.msg_type  = 'CANDIDATE';
+    msgCANDIDATE.candidate = candidate;
+    msgCANDIDATE.calldetails = calldetails;
+    msgCANDIDATE.userid = this.mediator.userId;
+     
+    trace("SignalingChannel.candidate", "Candidate : " + candidate);
+    this.socket.send(JSON.stringify(msgCANDIDATE));
+};
+
+SignalingChannel.sendMessage = function(msgType, msgData, calldetails) {
+    var msg = {};
+    msg.msg_type = msgType;
+    msg.calldetails = calldetails;
+    msg.userid = this.mediator.userId;
+    
+    if (msgData !== null){
+        msg.data = msgData;
+        trace("SignalingChannel.sendMessage", "type [" + msgType + "] data\n " + msgData);
+    }
+    
+    this.socket.send(JSON.stringify(msg));
+};
+
 
 SignalingChannel.offerData = function(offer) {
     
@@ -88,17 +127,6 @@ SignalingChannel.answerData = function(answer) {
 
 SignalingChannel.hangupData = function() {
     
-};
-
-SignalingChannel.sendMessage = function(msgType, msgData) {
-    var msg = {};
-    msg.msg_type = msgType;
-    if (msgData !== null){
-        msg.data = msgData;
-        trace("SignalingChannel.sendMessage", "type [" + msgType + "] data\n " + msgData);
-    }
-    
-    this.socket.send(JSON.stringify(msg));
 };
 
 
@@ -123,22 +151,22 @@ SignalingChannel.onMessage = function(wsMessage) {
 
          // Calls mediator callbacks by type
          case "OFFER":
-            this.mediator.onOfferMedia(msg.data);
+            this.mediator.onOfferMedia(msg.data, msg.calldetails);
             break;
 
          // To be processed as Client
          case "ANSWER":
-            this.mediator.onAnswerMedia(msg.data);
+            this.mediator.onAnswerMedia(msg.data, msg.calldetails);
             break;
 
          // To be processed as either Client or Server
          case "BYE":
-            this.mediator.onByeMedia();
+            this.mediator.onByeMedia(msg.calldetails);
             break;
 
          // To be processed as either Client or Server
          case "CANDIDATE":
-            this.mediator.onCandidateMedia(msg.candidate);
+            this.mediator.onCandidateMedia(msg.candidate, msg.calldetails);
             break;
 
          // Unexpected, but reserved for other message types
@@ -162,3 +190,8 @@ SignalingChannel.onClose = function() {
     
     this.mediator.onSignalingChannelClose();
 };
+
+
+
+
+ 

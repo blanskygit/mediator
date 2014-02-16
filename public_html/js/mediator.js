@@ -36,7 +36,6 @@ var remoteStream;
 // Obtain the script parameter (CLIENT or SERVER)
 var params = document.body.getElementsByTagName('script');
 var query = params[0].classList;
-var weAreActingAs = query[0];
 var sdpConstraints = {'mandatory': {
                         'OfferToReceiveAudio':true, 
                         'OfferToReceiveVideo':true }};
@@ -46,14 +45,23 @@ btn1.disabled = false;
 btn2.disabled = true;
 
 
+function CallDetails(caller, callee) {
+  this.callid = Math.uuidFast();
+  this.caller = caller;
+  this.callee = callee;
+};
 
+CallDetails.print = function () {
+    trace("callid=[" + this.callid + "], caller=[" + this.caller + "], calee=[" + this.callee + "]");
+};
 
-var mediator = new Mediator(userId)
+var mediator = new Mediator(userId);
 
 
 function Mediator(userId){
     this.userId = userId;
     this.sigchannel = new SignalingChannel(nodeHostAddress, nodeHostPort, mediator);
+    this.activecalls = {};
 }
 
 Mediator.init = function() {
@@ -74,107 +82,6 @@ Mediator.init = function() {
     window.URL = window.URL || window.webkitURL;
 };
 
-
-
-
-// Open a channel towards the Node server
-var openChannel = function () {
-
-    trace("openChannel","Opening channel");
-
-    // Construction of the websocket together with the application
-
-	trace("ws://' + nodeHostAddress + ':' + nodeHostPort",'Channel opened.');
-
-    socket = new WebSocket('ws://10.112.10.238:8080', 'appstract');
-
-    socket.onopen = function () {
-
-       trace("openChannel",'Channel opened.');
-
-       // send as CLIENT or SERVER
-       var msgINFO = {};
-       msgINFO.msg_type = weAreActingAs;
-       socket.send(JSON.stringify(msgINFO));
-
-       // if we are acting as CLIENT
-        if (weAreActingAs == 'CLIENT') {
-
-            trace("openChannel", "Creating PeerConnection");
-            createPeerConnection();
-
-            trace("openChannel", "Adding local stream");
-            pc.addStream(localStream);
-
-            trace("openChannel", "Sending offer to peer");
-
-            pc.createOffer(function(sessionDescription) {
-                pc.setLocalDescription(sessionDescription);
-                var msgOFFER = {};
-                msgOFFER.msg_type = 'OFFER';
-                msgOFFER.data = sessionDescription;
-                trace("openChannel", "Sending sdp : " + sessionDescription.sdp);
-                socket.send(JSON.stringify(msgOFFER));
-            }, null, sdpConstraints);
-
-        };
-    };
-
-    socket.onerror = function (error) {
-       trace("openChannel",'Channel error.', error);
-    };
-
-    socket.onclose = function () {
-       trace("openChannel",'Channel close.');
-       
-       btn1.disabled = false;
-       btn2.disabled = false;
-       
-       channelReady = false;
-    };
-
-    // Log messages from the server
-    socket.onmessage = function (e) {
-      var msg = JSON.parse(e.data);
-      trace("openChannel"," Received message type : " + msg.msg_type);
-      switch (msg.msg_type) {
-
-         // To be processed as Server
-         case "OFFER":
-            trace("openChannel","offer");
-            createPeerConnection();
-            pc.setRemoteDescription(new RTCSessionDescription(msg.data));
-            pc.createAnswer(setLocalAndSendMessage, null, sdpConstraints);
-			
-            break;
-
-         // To be processed as Client
-         case "ANSWER":
-            pc.setRemoteDescription(new RTCSessionDescription(msg.data));
-            trace("openChannel","answer");	    
-            // trace("openChannel","Got Answer : " + msg.data.sdp);
-            break;
-
-         // To be processed as either Client or Server
-         case "BYE":
-            pc.close();
-            btn1.disabled = false;
-            btn2.disabled = false;
-            break;
-
-         // To be processed as either Client or Server
-         case "CANDIDATE":
-            var candidate = new RTCIceCandidate({candidate: msg.candidate});
-            pc.addIceCandidate(candidate);
-            break;
-
-         // Unexpected, but reserved for other message types
-         default:
-            trace("openChannel",'default');
-      }
-
-    };
-}
 
 // This function in invoked in case access to the camera devide is rejected
 var accessRejected = function() {
@@ -227,18 +134,17 @@ function call(/* TBD - call target */) {
 
 function hangup() {
 
-  // Send bye to the peer
-  trace("hangup","Sending BYE");
-  
-  try {  
-     var msgBYE = {};
-     msgBYE.msg_type = 'BYE';
-     socket.send(JSON.stringify(msgBYE));
-    } catch(e) {
-     trace("hangup","Peer connection was not established yet");
-  }
+    // Send bye to the peer
+    trace("hangup", "Sending BYE");
 
-  stop();
+    try {
+        mediator.sigchannel.hangupMedia();
+    } catch (e) {
+        trace("hangup", "Peer connection was not established yet" + e);
+    }
+    
+    // Resets all the resources
+    stop();
 }
 
 function stop() {
@@ -268,14 +174,17 @@ function stop() {
  * @param {type} offer
  * @returns {undefined}
  */
-Mediator.onOfferMedia = function(offer) {
-    trace("Mediator.onOfferMedia", "Received OFFER = \n" + offer);
+Mediator.onOfferMedia = function(offer, calldetails) {
+    trace("Mediator.onOfferMedia", "New call [" + calldetails.print() + "], Received OFFER = \n" + offer);
+    
+    // Adds new call details
+    mediator.activecalls[calldetails.callid] = calldetails;
     
     // Creates PeerConnection on OFFER (callee side)
     createPeerConnection();
     
     pc.setRemoteDescription(new RTCSessionDescription(offer));
-    pc.createAnswer(setLocalAndSendMessage, null, sdpConstraints);
+    pc.createAnswer(setLocalAndSendMessage, null /* calldetails?? */, sdpConstraints);
 };
 
 
@@ -284,8 +193,8 @@ Mediator.onOfferMedia = function(offer) {
  * @param {type} answer
  * @returns {undefined}
  */
-Mediator.onAnswerMedia = function(answer) {
-    trace("Mediator.onAnswerMedia", "Received ANSWER = \n" + answer);
+Mediator.onAnswerMedia = function(answer, calldetails) {
+    trace("Mediator.onAnswerMedia", "call [" + calldetails.print() + "], Received ANSWER = \n" + answer);
     
     pc.setRemoteDescription(new RTCSessionDescription(answer));
 };
@@ -295,7 +204,7 @@ Mediator.onAnswerMedia = function(answer) {
  * 
  * @returns {undefined}
  */
-Mediator.onByeMedia = function() {
+Mediator.onByeMedia = function(calldetails) {
     trace("Mediator.onByeMedia", "Received BYE");
     
     pc.close();
@@ -305,7 +214,7 @@ Mediator.onByeMedia = function() {
 
 
 
-Mediator.onCandidateMedia = function(candidate) {
+Mediator.onCandidateMedia = function(candidate, calldetails) {
     trace("Mediator.onByeMedia", "Received CANDIDATE = \n" + candidate);
     
     var iceCandidate = new RTCIceCandidate({candidate: candidate});
@@ -325,10 +234,13 @@ Mediator.onSignalingChannelClose = function() {
     btn1.disabled = false;
     btn2.disabled = false;
     
+    // Adds new call details
+    mediator.activecallsByCallId = {};
+    mediator.activecallsByPc = {};
+    
     // TBD
     
 };
-
 
 
 
@@ -338,6 +250,11 @@ Mediator.onSignalingChannelClose = function() {
  * @returns {undefined}
  */
 Mediator.makeCall = function () {
+    
+    var calldetails = new CallDetails(mediator.userId, "TBD - CALLEE");
+    
+    // Adds new call details
+    mediator.activecalls[calldetails.callid] = calldetails;
     
     var video = $("#local-video");
 
@@ -352,16 +269,18 @@ Mediator.makeCall = function () {
         // Creates Peer Connection on make call
         createPeerConnection();
         
+        activecallsByPc[pc] = calldetails;
+        
         pc.createOffer(function(sessionDescription) {
             
                 pc.setLocalDescription(sessionDescription);
                 
-                mediator.sigchannel.offerMedia(sessionDescription);
+                mediator.sigchannel.offerMedia(sessionDescription, calldetails);
                 
-            }, null, sdpConstraints);
+            }, null /* calldetails?? */, sdpConstraints);
         
     }, accessRejected);
-}
+};
 
 
 
@@ -416,17 +335,15 @@ var createPeerConnection = function() {
 var onIceCandidate = function(event) {
 
     if (event.candidate) {
-
-       trace("openChannel","Sending ICE candidate to remote peer : " + event.candidate.candidate);
-       var msgCANDIDATE = {};
-       msgCANDIDATE.msg_type  = 'CANDIDATE';
-       msgCANDIDATE.candidate = event.candidate.candidate;
-       socket.send(JSON.stringify(msgCANDIDATE));
+       trace("onIceCandidate", "Sending ICE candidate to remote peer : " + event.candidate.candidate);
+       mediator.sigchannel.candidate(event.candidate.candidate);
+       
+       var evpc = event.currentTarget;
 
     } else {
        trace("onIceCandidate","End of candidates");
     }
-}
+};
 
 var onSessionConnecting = function(message) {
     trace("onSessionConnecting","Session connecting");
