@@ -20,6 +20,7 @@
 var nodeHostAddress     = "54.201.205.82";
 var nodeHostPort        = "8080";
 var userId              = "blansky";
+var appcontext          = "appstract";
 
 var stunServer       = "stun:stun.l.google.com:19302";
 var channelReady     = false;
@@ -74,70 +75,7 @@ Mediator.init = function() {
 };
 
 
-// This function sends candidates to the remote peer, via the node server
-var onIceCandidate = function(event) {
 
-    if (event.candidate) {
-
-       trace("openChannel","Sending ICE candidate to remote peer : " + event.candidate.candidate);
-       var msgCANDIDATE = {};
-       msgCANDIDATE.msg_type  = 'CANDIDATE';
-       msgCANDIDATE.candidate = event.candidate.candidate;
-       socket.send(JSON.stringify(msgCANDIDATE));
-
-    } else {
-       trace("onIceCandidate","End of candidates");
-    }
-}
-
-var onSessionConnecting = function(message) {
-    trace("onSessionConnecting","Session connecting");
-}
-
-var onSessionOpened = function(message) {
-    trace("onSessionOpened","Session opened");
-}
-
-var onRemoteStreamRemoved = function(event) {
-    trace("onRemoteStreamRemoved","Remote stream removed");
-}
-
-// Create the peer connection (via the node server)
-var createPeerConnection = function() {
-
-    var pc_config = {"iceServers": [{"url": stunServer}]};
-    // var pc_config = null;
-
-    pc = new webkitRTCPeerConnection(pc_config);
-
-    pc.onicecandidate = onIceCandidate;
-    pc.onconnecting   = onSessionConnecting;
-    pc.onopen         = onSessionOpened;
-
-    // The following is for the SERVER side
-    pc.onaddstream = function(event) {
-       trace("createPeerConnection","Remote stream added.");
-       var url = webkitURL.createObjectURL(event.stream);
-       trace("createPeerConnection","url = " + url);
-       remoteStream = event.stream;
-       $("#remote-video").attr("src",url);
-    };
-
-    pc.onremovestream = onRemoteStreamRemoved;
-
-    trace("createPeerConnection", "Created webkitRTCPeerConnnection ");
-    // trace("createPeerConnection", "pc-config : " + JSON.stringify(pc_config));
-};
-
-// In case we received an OFFER as SERVER, we send an ANSWER backwards
-function setLocalAndSendMessage(sessionDescription) {
-    pc.setLocalDescription(sessionDescription);
-    // trace("setLocalAndSendMessage","SessionDescription = " + sessionDescription.sdp);
-    var msgANSWER = {};
-    msgANSWER.msg_type = 'ANSWER';
-    msgANSWER.data = sessionDescription;
-    socket.send(JSON.stringify(msgANSWER));
-}
 
 // Open a channel towards the Node server
 var openChannel = function () {
@@ -252,6 +190,16 @@ var hasGetUserMedia = function() {
               navigator.msGetUserMedia);
 }
 
+
+
+/*******************************************************************************************
+ * 
+ *                      GUI API            
+ * 
+ *******************************************************************************************/
+
+
+
 // Main entry point...
 function start() {
     
@@ -263,28 +211,17 @@ function start() {
          trace("start", "ERROR - GetUserMedia not supported by the browser!");
     }
     else {
-        mediator.sigchannel.open();
+        mediator.sigchannel.open(appcontext);
     }
 };
 
-function call() {
+function call(/* TBD - call target */) {
 
     btn2.disabled = true;
 
     trace("call", "Starting call");
 
-    var video = $("#local-video");
-
-    navigator.getUserMedia({audio: true, video: true}, function(stream) {
-
-        localStream = stream;
-        trace("strean", stream);
-
-        video.attr('src', window.URL.createObjectURL(localStream));
-        
-        openChannel();
-        
-    }, accessRejected);
+    mediator.makeCall();
     
 }
 
@@ -319,19 +256,195 @@ function stop() {
     }
 }
 
+/*******************************************************************************************
+ * 
+ *                       Signaling Channel Callbacks  
+ * 
+ *******************************************************************************************/
 
+
+/**
+ * 
+ * @param {type} offer
+ * @returns {undefined}
+ */
 Mediator.onOfferMedia = function(offer) {
     trace("Mediator.onOfferMedia", "Received OFFER = \n" + offer);
     
-    // Creates PeerConnection on OFFER (caller side)
+    // Creates PeerConnection on OFFER (callee side)
     createPeerConnection();
     
     pc.setRemoteDescription(new RTCSessionDescription(offer));
     pc.createAnswer(setLocalAndSendMessage, null, sdpConstraints);
 };
 
+
+/**
+ * 
+ * @param {type} answer
+ * @returns {undefined}
+ */
 Mediator.onAnswerMedia = function(answer) {
     trace("Mediator.onAnswerMedia", "Received ANSWER = \n" + answer);
     
     pc.setRemoteDescription(new RTCSessionDescription(answer));
 };
+
+
+/**
+ * 
+ * @returns {undefined}
+ */
+Mediator.onByeMedia = function() {
+    trace("Mediator.onByeMedia", "Received BYE");
+    
+    pc.close();
+    btn1.disabled = false;
+    btn2.disabled = false;
+};
+
+
+
+Mediator.onCandidateMedia = function(candidate) {
+    trace("Mediator.onByeMedia", "Received CANDIDATE = \n" + candidate);
+    
+    var iceCandidate = new RTCIceCandidate({candidate: candidate});
+    pc.addIceCandidate(iceCandidate);
+};
+
+
+Mediator.onSignalingChannelError = function(error) {
+    trace("Mediator.onSignalingChannelError", "Received ERROR from Signaling Channel, error [" + error + "]");
+    
+    // TBD
+};
+
+Mediator.onSignalingChannelClose = function() {
+    trace("Mediator.onSignalingChannelError", "Received CLOSE from Signaling Channel");
+    
+    btn1.disabled = false;
+    btn2.disabled = false;
+    
+    // TBD
+    
+};
+
+
+
+
+
+/**
+ * 
+ * @returns {undefined}
+ */
+Mediator.makeCall = function () {
+    
+    var video = $("#local-video");
+
+    navigator.getUserMedia({audio: true, video: true}, function(stream) {
+
+        localStream = stream;
+        
+        trace("Mediator.makeCall", "Retrieved Local Stream \n[" + stream + "]");
+
+        video.attr('src', window.URL.createObjectURL(localStream));
+        
+        // Creates Peer Connection on make call
+        createPeerConnection();
+        
+        pc.createOffer(function(sessionDescription) {
+            
+                pc.setLocalDescription(sessionDescription);
+                
+                mediator.sigchannel.offerMedia(sessionDescription);
+                
+            }, null, sdpConstraints);
+        
+    }, accessRejected);
+}
+
+
+
+/**
+ * 
+ * @returns {undefined}
+ */
+var createPeerConnection = function() {
+
+    var pc_config = {"iceServers": [{"url": stunServer}]};
+
+    pc = new webkitRTCPeerConnection(pc_config);
+
+    pc.onicecandidate = onIceCandidate;
+    pc.onconnecting   = onSessionConnecting;
+    pc.onopen         = onSessionOpened;
+
+    // On add stream for remote stream presentation
+    pc.onaddstream = function(event) {
+       
+       // Creates URL for the remote stream 
+       var url = webkitURL.createObjectURL(event.stream);
+       
+       // Saves the remote stream
+       remoteStream = event.stream;
+       
+       // Connects the URL to the "remote-video" window 
+       $("#remote-video").attr("src", url);
+       
+       trace("createPeerConnection","Remote stream added for URL [" + url + "]");
+    };
+
+    pc.onremovestream = onRemoteStreamRemoved;
+
+    trace("createPeerConnection", "Created webkitRTCPeerConnnection ");
+    
+    // Once the pc created adds local stream
+    pc.addStream(localStream);
+    
+    trace("createPeerConnection", "Added local stream");
+};
+
+
+/*******************************************************************************************
+ * 
+ *                       WebRTC Callbacks  
+ * 
+ *******************************************************************************************/
+
+
+// This function sends candidates to the remote peer, via the node server
+var onIceCandidate = function(event) {
+
+    if (event.candidate) {
+
+       trace("openChannel","Sending ICE candidate to remote peer : " + event.candidate.candidate);
+       var msgCANDIDATE = {};
+       msgCANDIDATE.msg_type  = 'CANDIDATE';
+       msgCANDIDATE.candidate = event.candidate.candidate;
+       socket.send(JSON.stringify(msgCANDIDATE));
+
+    } else {
+       trace("onIceCandidate","End of candidates");
+    }
+}
+
+var onSessionConnecting = function(message) {
+    trace("onSessionConnecting","Session connecting");
+}
+
+var onSessionOpened = function(message) {
+    trace("onSessionOpened","Session opened");
+}
+
+var onRemoteStreamRemoved = function(event) {
+    trace("onRemoteStreamRemoved","Remote stream removed");
+}
+
+
+
+// In case we received an OFFER as SERVER, we send an ANSWER backwards
+function setLocalAndSendMessage(sessionDescription) {
+    trace("setLocalAndSendMessage", "Triggers ANSWER");
+    pc.setLocalDescription(sessionDescription);
+    mediator.sigchannel.answerMedia(sessionDescription);
+}

@@ -5,6 +5,13 @@
  */
 
 
+/**
+ * 
+ * @param {type} targetHost
+ * @param {type} targetPort
+ * @param {type} mediator
+ * @returns {SignalingChannel}
+ */
 function SignalingChannel(targetHost, targetPort, mediator) {
   this.targetHost = targetHost;
   this.targetPort = targetPort;
@@ -13,49 +20,58 @@ function SignalingChannel(targetHost, targetPort, mediator) {
   this.socket;
 }
 
-// Open a channel towards the Node server
-SignalingChannel.open = function(onsigchannelmsg, onsigchannelclose, onsigchannelerror) {
+/**
+ * 
+ * @param {type} appcontext
+ * @returns {undefined}
+ */
+SignalingChannel.open = function(appcontext) {
 
-    this.tracer.trace("open", "Opening channel");
+    this.tracer.trace("SignalingChannel.open", "Opening channel");
 
     // Construction of the websocket together with the application
 
     var targetURL = 'ws://' + this.targetHost + ':' + this.targetPort;
 
-    this.tracer.trace("open", 'Channel URL: ' + targetURL);
+    this.tracer.trace("SignalingChannel.open", 'Channel URL: ' + targetURL);
 
-    this.socket = new WebSocket(targetURL, 'appstract');
+    this.socket = new WebSocket(targetURL, appcontext);
 
     this.socket.onopen = function() {
         
-        trace("open", 'Channel opened.');
+        trace("SignalingChannel.open.socket.onopen", "Signaling Channel open, sends REGISTER for user id [" + this.mediator.userid + "]");
         
          var msgREGISTER = {};
             msgREGISTER.msg_type = "REGISTER";
-            msgREGISTER.userid = this.userid;
-            socket.send(JSON.stringify(msgREGISTER));
-
+            msgREGISTER.userid = this.mediator.userid;
+            this.socket.send(JSON.stringify(msgREGISTER));
     };
 
-    this.socket.onerror = onsigchannelerror(error);
+    this.socket.onerror = SignalingChannel.onError(error);
 
-    this.socket.onclose = onsigchannelclose;
+    // 
+    this.socket.onclose = SignalingChannel.onClose();
 
-    // Log messages from the server
-    this.socket.onmessage = function(e) {
-        var msg = JSON.parse(e.data);
-        onsigchannelmsg(msg);
-    };
+    // Calls local on message
+    this.socket.onmessage = SignalingChannel.onMessage(wsMessage);
 };
 
 
 SignalingChannel.offerMedia = function(offer) {
-    
+    var msgOFFER = {};
+    msgOFFER.msg_type = 'OFFER';
+    msgOFFER.data = offer;
+    trace("SignalingChannel.offerMedia", "Sending SDP : " + offer.sdp);
+    this.socket.send(JSON.stringify(msgOFFER));
 };
 
 
 SignalingChannel.answerMedia = function(answer) {
-    
+    var msgANSWER = {};
+    msgANSWER.msg_type = 'ANSWER';
+    msgANSWER.data = answer;
+    trace("SignalingChannel.answerMedia", "Sending SDP : " + answer.sdp);
+    this.socket.send(JSON.stringify(msgANSWER));
 };
 
 SignalingChannel.hangupMedia = function() {
@@ -74,10 +90,75 @@ SignalingChannel.hangupData = function() {
     
 };
 
+SignalingChannel.sendMessage = function(msgType, msgData) {
+    var msg = {};
+    msg.msg_type = msgType;
+    if (msgData !== null){
+        msg.data = msgData;
+        trace("SignalingChannel.sendMessage", "type [" + msgType + "] data\n " + msgData);
+    }
+    
+    this.socket.send(JSON.stringify(msg));
+};
+
+
 SignalingChannel.close = function() {
     
 };
 
 
+/**
+ * SignalingChannel.onMessage
+ * 
+ * @param {type} wsMessage
+ * @returns {undefined}
+ */
+SignalingChannel.onMessage = function(wsMessage) {
+    
+      var msg = JSON.parse(wsMessage.data);
+      
+      trace("SignalingChannel.onMessage"," Received message type [" + msg.msg_type + "]");
+      
+      switch (msg.msg_type) {
 
-SignalingChannel.on
+         // Calls mediator callbacks by type
+         case "OFFER":
+            this.mediator.onOfferMedia(msg.data);
+            break;
+
+         // To be processed as Client
+         case "ANSWER":
+            this.mediator.onAnswerMedia(msg.data);
+            break;
+
+         // To be processed as either Client or Server
+         case "BYE":
+            this.mediator.onByeMedia();
+            break;
+
+         // To be processed as either Client or Server
+         case "CANDIDATE":
+            this.mediator.onCandidateMedia(msg.candidate);
+            break;
+
+         // Unexpected, but reserved for other message types
+         default:
+            trace("SignalingChannel.onMessage", "Unexpected message type [" + msg.msg_type + "] was received, dropped");
+      }
+};
+
+
+SignalingChannel.onError = function(error) {
+    
+    // TBD - Local treatment
+    
+    this.mediator.onSignalingChannelError(error);
+};
+
+
+SignalingChannel.onClose = function() {
+    
+    // TBD - Local treatment
+    
+    this.mediator.onSignalingChannelClose();
+};
