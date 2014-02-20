@@ -18,7 +18,8 @@ video {
 </style>
 
 </head>
-<body>
+<body onload="initParams()">
+            
 <div id="container">
   <div id="local">
     <video id="local-video" autoplay="autoplay"></video>
@@ -33,14 +34,34 @@ video {
 <button id="btn3" onclick="hangup()">Hang Up</button>
 <button id="btn4" onclick="tracer.clear()">Clear Trace</button>
 
-<br><br><br>
+<br><br>
+
+<div id="texts">
+User ID:
+<br>
+<textarea id ="useridtextbox" name="comments" cols="15" rows="1" style="display:inline">
+borisl
+</textarea>
+<br>
+Callee:
+<br>
+<textarea id ="calleetextbox" name="comments" cols="15" rows="1" style="display:inline">
+arkady
+</textarea>
+<br>
+Signaling Server IP:
+<br>
+<textarea id ="sigservertextbox" name="comments" cols="20" rows="1" style="display:inline">
+</textarea>
+</div>
+<br><br>
 
 <div id="tracefield" style="height:300px;width:95%;border:1px solid red;font:16px/26px Georgia, Garamond, Serif;overflow:auto;"> </div>
 
 <script src="./js/mediator.js" class="MEDIATOR" ></script>
-
+<script src="./js/signalingchannel.js" ></script>
+<script src="./js/uuidgenerator.js" ></script>
 <script src="./js/tracer.js" ></script>
 
 </body>
 </html>
-
