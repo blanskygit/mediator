@@ -17,21 +17,19 @@
 //
 
 // This is where the node.js is running
-var nodeHostAddress     = "54.201.205.82";
-var nodeHostPort        = "8080";
-var userId              = "blansky";
+var defaultsigserveraddr     = "54.201.205.82:8080";
+var userid              = "blansky";
 var appcontext          = "appstract";
 
 var stunServer       = "stun:stun.l.google.com:19302";
 var channelReady     = false;
 
 
-
-var sigchannel;
 var pc;
 var socket;
 var localStream;
 var remoteStream;
+var sigchannel;
 
 // Obtain the script parameter (CLIENT or SERVER)
 var params = document.body.getElementsByTagName('script');
@@ -40,39 +38,71 @@ var sdpConstraints = {'mandatory': {
                         'OfferToReceiveAudio':true, 
                         'OfferToReceiveVideo':true }};
 
-// Button state definitions
-btn1.disabled = false;
-btn2.disabled = true;
+
+
+
+function initParams() {
+    // Button state definitions
+    btn1.disabled = false;
+    btn2.disabled = true;
+    sigservertextbox.value = defaultsigserveraddr;
+
+    $.getScript("./js/tracer.js", function() {
+        trace("initParams", "tracer.js loaded ------");
+    });
+    
+    $.getScript("./js/signalingchannel.js", function() {
+        trace("initParams", "signalingchannel.js loaded ------");
+        sigchannel = new SignalingChannel();
+    });
+    
+    $.getScript("./js/uuidgenerator.js", function() {
+        trace("initParams", "uuidgenerator.js loaded ------");
+    });
+};
 
 
 function CallDetails(caller, callee) {
   this.callid = Math.uuidFast();
-  this.caller = caller;
-  this.callee = callee;
+  this.callerid = caller;
+  this.calleeid = callee;
 };
 
-CallDetails.print = function () {
-    trace("callid=[" + this.callid + "], caller=[" + this.caller + "], calee=[" + this.callee + "]");
+
+
+
+CallDetails.prototype.print = function () {
+    trace("CallDetails.prototype.print", "callid=[" + this.callid + "], caller=[" + this.callerid + "], calee=[" + this.calleeid + "]");
 };
 
-var mediator = new Mediator(userId);
+var mediator = new Mediator();
 
 
-function Mediator(userId){
-    this.userId = userId;
-    this.sigchannel = new SignalingChannel(nodeHostAddress, nodeHostPort, mediator);
+function Mediator(){
+    this.userid = userid;
+    this.sigchannel = sigchannel;
     this.activecalls = {};
+    this.activecallsByPc = {};
+    this.candidates = new Array();
+    this.sigserveraddr = defaultsigserveraddr;
 }
 
-Mediator.init = function() {
+Mediator.prototype.init = function() {
     
     btn1.disabled = true;
     btn2.disabled = false;
+    
+    
+    this.userid = useridtextbox.value;
+    
+    if (sigservertextbox.value != null && !sigservertextbox.value.match("")){
+        this.sigserveraddr = sigservertextbox.value;
+    }
 
     // Clear the trace section
     tracer.clear();
     
-    trace("Mediator.init", "Initializes navigator.getUserMedia & window.URL");
+    trace("Mediator.prototype.init", "Initializes navigator.getUserMedia & window.URL");
 
     navigator.getUserMedia = navigator.getUserMedia ||
             navigator.webkitGetUserMedia ||
@@ -118,7 +148,8 @@ function start() {
          trace("start", "ERROR - GetUserMedia not supported by the browser!");
     }
     else {
-        mediator.sigchannel.open(appcontext);
+        //sigchannel.open(mediator, appcontext);
+        sigchannel.open(mediator, appcontext);
     }
 };
 
@@ -128,7 +159,7 @@ function call(/* TBD - call target */) {
 
     trace("call", "Starting call");
 
-    mediator.makeCall();
+    mediator.makeCall(/* TBD - call target */);
     
 }
 
@@ -136,9 +167,11 @@ function hangup() {
 
     // Send bye to the peer
     trace("hangup", "Sending BYE");
+    
+    var calldetails = mediator.activecallsByPc[pc];
 
     try {
-        mediator.sigchannel.hangupMedia();
+        sigchannel.hangupMedia(calldetails);
     } catch (e) {
         trace("hangup", "Peer connection was not established yet" + e);
     }
@@ -154,7 +187,14 @@ function stop() {
     btn1.disabled = false;
     btn2.disabled = false;
     
+  
+    mediator.activecallsByCallId = {};
+    mediator.activecallsByPc = {};
+    
+    // TBD
+    
     try {
+     pc.removeStream(localStream);   
      pc.close();
      pc = null;
     } catch(e) {
@@ -174,27 +214,54 @@ function stop() {
  * @param {type} offer
  * @returns {undefined}
  */
-Mediator.onOfferMedia = function(offer, calldetails) {
-    trace("Mediator.onOfferMedia", "New call [" + calldetails.print() + "], Received OFFER = \n" + offer);
-    
+Mediator.prototype.onOfferMedia = function(offer, calldetails) {
+
+    trace("Mediator.prototype.onOfferMedia", "New call: callid=[" + calldetails.callid + "], caller=[" + calldetails.callerid + "], calee=[" + calldetails.calleeid + "], Received OFFER = \n" + offer.sdp);
+
     // Adds new call details
     mediator.activecalls[calldetails.callid] = calldetails;
-    
-    // Creates PeerConnection on OFFER (callee side)
-    createPeerConnection();
-    
-    pc.setRemoteDescription(new RTCSessionDescription(offer));
-    pc.createAnswer(setLocalAndSendMessage, null /* calldetails?? */, sdpConstraints);
+
+    var video = $("#local-video");
+
+
+    // Creates Peer Connection on make call
+    createPeerConnection(calldetails);
+
+
+    navigator.getUserMedia({audio: true, video: true}, function(stream) {
+
+        localStream = stream;
+
+        trace("Mediator.prototype.onOfferMedia", "Retrieved Local Stream \n[" + stream + "]");
+
+        video.attr('src', window.URL.createObjectURL(localStream));
+
+        // Creates Peer Connection on make call
+        //createPeerConnection(calldetails);
+        pc.addStream(localStream);
+
+        trace("Mediator.prototype.onOfferMedia", "Added local stream");
+
+        pc.setRemoteDescription(new RTCSessionDescription(offer));
+        pc.createAnswer(setLocalAndSendMessage, null /* onSuccess */, sdpConstraints);
+
+    }, accessRejected);
+
+   
 };
 
 
 /**
- * 
  * @param {type} answer
+ * @param {type} calldetails
  * @returns {undefined}
  */
-Mediator.onAnswerMedia = function(answer, calldetails) {
-    trace("Mediator.onAnswerMedia", "call [" + calldetails.print() + "], Received ANSWER = \n" + answer);
+Mediator.prototype.onAnswerMedia = function(answer, calldetails) {
+    trace("Mediator.prototype.onAnswerMedia", "callid=[" + calldetails.callid + "], caller=[" + calldetails.callerid + "], calee=[" + calldetails.calleeid + "], Received ANSWER = \n" + answer.sdp);
+    
+    for (var i = 0; i < mediator.candidates.length; i++){
+        sigchannel.candidate(mediator.candidates[i], calldetails);
+    }
     
     pc.setRemoteDescription(new RTCSessionDescription(answer));
 };
@@ -204,41 +271,36 @@ Mediator.onAnswerMedia = function(answer, calldetails) {
  * 
  * @returns {undefined}
  */
-Mediator.onByeMedia = function(calldetails) {
-    trace("Mediator.onByeMedia", "Received BYE");
+Mediator.prototype.onByeMedia = function(calldetails) {
+    trace("Mediator.prototype.onByeMedia", "Received BYE");
     
     pc.close();
     btn1.disabled = false;
     btn2.disabled = false;
+    
+    this.activecalls[calldetails.callid] = null;
 };
 
 
 
-Mediator.onCandidateMedia = function(candidate, calldetails) {
-    trace("Mediator.onByeMedia", "Received CANDIDATE = \n" + candidate);
+Mediator.prototype.onCandidateMedia = function(candidate, calldetails) {
+    trace("Mediator.prototype.onCandidateMedia", "Received CANDIDATE = \n" + candidate);
     
     var iceCandidate = new RTCIceCandidate({candidate: candidate});
     pc.addIceCandidate(iceCandidate);
 };
 
 
-Mediator.onSignalingChannelError = function(error) {
-    trace("Mediator.onSignalingChannelError", "Received ERROR from Signaling Channel, error [" + error + "]");
+Mediator.prototype.onSignalingChannelError = function(error) {
+    trace("Mediator.prototype.onSignalingChannelError", "Received ERROR from Signaling Channel, error [" + error + "]");
     
     // TBD
 };
 
-Mediator.onSignalingChannelClose = function() {
-    trace("Mediator.onSignalingChannelError", "Received CLOSE from Signaling Channel");
+Mediator.prototype.onSignalingChannelClose = function() {
+    trace("Mediator.prototype.onSignalingChannelError", "Received CLOSE from Signaling Channel");
     
-    btn1.disabled = false;
-    btn2.disabled = false;
-    
-    // Adds new call details
-    mediator.activecallsByCallId = {};
-    mediator.activecallsByPc = {};
-    
-    // TBD
+    stop();
     
 };
 
@@ -249,37 +311,44 @@ Mediator.onSignalingChannelClose = function() {
  * 
  * @returns {undefined}
  */
-Mediator.makeCall = function () {
+Mediator.prototype.makeCall = function (/* calee */) {
     
-    var calldetails = new CallDetails(mediator.userId, "TBD - CALLEE");
+    var callee = calleetextbox.value;
+    
+    var calldetails = new CallDetails(mediator.userid, callee);
     
     // Adds new call details
     mediator.activecalls[calldetails.callid] = calldetails;
     
     var video = $("#local-video");
 
+    
     navigator.getUserMedia({audio: true, video: true}, function(stream) {
 
         localStream = stream;
         
-        trace("Mediator.makeCall", "Retrieved Local Stream \n[" + stream + "]");
+        trace("Mediator.prototype.makeCall", "Retrieved Local Stream \n[" + stream + "]");
 
         video.attr('src', window.URL.createObjectURL(localStream));
         
         // Creates Peer Connection on make call
-        createPeerConnection();
+        createPeerConnection(calldetails);
         
-        activecallsByPc[pc] = calldetails;
+        pc.addStream(localStream);
+        
+        trace("Mediator.prototype.makeCall", "Added local stream");
         
         pc.createOffer(function(sessionDescription) {
             
                 pc.setLocalDescription(sessionDescription);
                 
-                mediator.sigchannel.offerMedia(sessionDescription, calldetails);
+                // Sends OFFER
+                sigchannel.offerMedia(sessionDescription, calldetails);
                 
-            }, null /* calldetails?? */, sdpConstraints);
+            }, null , sdpConstraints);
         
     }, accessRejected);
+   
 };
 
 
@@ -288,39 +357,36 @@ Mediator.makeCall = function () {
  * 
  * @returns {undefined}
  */
-var createPeerConnection = function() {
+var createPeerConnection = function(calldetails) {
 
     var pc_config = {"iceServers": [{"url": stunServer}]};
 
     pc = new webkitRTCPeerConnection(pc_config);
 
+    mediator.activecallsByPc[pc] = calldetails;
+
     pc.onicecandidate = onIceCandidate;
-    pc.onconnecting   = onSessionConnecting;
-    pc.onopen         = onSessionOpened;
+    pc.onconnecting = onSessionConnecting;
+    pc.onopen = onSessionOpened;
 
     // On add stream for remote stream presentation
     pc.onaddstream = function(event) {
-       
-       // Creates URL for the remote stream 
-       var url = webkitURL.createObjectURL(event.stream);
-       
-       // Saves the remote stream
-       remoteStream = event.stream;
-       
-       // Connects the URL to the "remote-video" window 
-       $("#remote-video").attr("src", url);
-       
-       trace("createPeerConnection","Remote stream added for URL [" + url + "]");
+
+        // Creates URL for the remote stream 
+        var url = webkitURL.createObjectURL(event.stream);
+
+        // Saves the remote stream
+        remoteStream = event.stream;
+
+        // Connects the URL to the "remote-video" window 
+        $("#remote-video").attr("src", url);
+
+        trace("createPeerConnection", "Remote stream added for URL [" + url + "]");
     };
 
     pc.onremovestream = onRemoteStreamRemoved;
 
-    trace("createPeerConnection", "Created webkitRTCPeerConnnection ");
-    
-    // Once the pc created adds local stream
-    pc.addStream(localStream);
-    
-    trace("createPeerConnection", "Added local stream");
+    trace("createPeerConnection", "PeerConnnection created");
 };
 
 
@@ -336,10 +402,20 @@ var onIceCandidate = function(event) {
 
     if (event.candidate) {
        trace("onIceCandidate", "Sending ICE candidate to remote peer : " + event.candidate.candidate);
-       mediator.sigchannel.candidate(event.candidate.candidate);
        
+       // Retrieves the context PC of this callback - get the relevant call by the PC 
        var evpc = event.currentTarget;
-
+       
+       var calldetails = mediator.activecallsByPc[evpc];
+       
+       if (mediator.userid.match(calldetails.callerid)){ // Caller case, store all the candidates
+           mediator.candidates.push(event.candidate.candidate);
+       }
+       else { //Callee case
+            sigchannel.candidate(event.candidate.candidate, calldetails);
+        }
+       
+      
     } else {
        trace("onIceCandidate","End of candidates");
     }
@@ -362,6 +438,14 @@ var onRemoteStreamRemoved = function(event) {
 // In case we received an OFFER as SERVER, we send an ANSWER backwards
 function setLocalAndSendMessage(sessionDescription) {
     trace("setLocalAndSendMessage", "Triggers ANSWER");
+    
     pc.setLocalDescription(sessionDescription);
-    mediator.sigchannel.answerMedia(sessionDescription);
+    var calldetails = mediator.activecallsByPc[pc];
+    sigchannel.answerMedia(sessionDescription, calldetails);
 }
+
+
+
+
+ 
+ 
